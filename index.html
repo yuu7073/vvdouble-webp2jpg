@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VV DOUBLE · WebP 轉 JPG</title>
+<style>
+  :root {
+    --bg: #f5f5f3;
+    --card: #ffffff;
+    --text: #1f1f1f;
+    --muted: #8a8a85;
+    --line: #e4e4df;
+    --accent: #1f1f1f;
+    --accent-text: #ffffff;
+    --ok: #2e8b57;
+    --err: #c0392b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 32px 16px 60px; }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: 1px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 24px; }
+
+  .drop {
+    border: 2px dashed var(--line);
+    border-radius: 14px;
+    background: var(--card);
+    padding: 44px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .drop.over { border-color: var(--accent); background: #fafaf8; }
+  .drop strong { display: block; font-size: 16px; margin-bottom: 6px; }
+  .drop span { color: var(--muted); font-size: 13px; }
+  #fileInput { display: none; }
+
+  .opts {
+    display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: center;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 18px; margin-top: 14px; font-size: 14px;
+  }
+  .opts label { display: flex; align-items: center; gap: 8px; }
+  .opts input[type=range] { width: 140px; }
+  .opts .q { min-width: 36px; font-variant-numeric: tabular-nums; }
+  .opts input[type=color] { width: 32px; height: 24px; border: 1px solid var(--line); border-radius: 6px; padding: 0; background: none; }
+
+  .bar { display: flex; gap: 10px; align-items: center; margin-top: 18px; flex-wrap: wrap; }
+  button {
+    border: 1px solid var(--accent); background: var(--accent); color: var(--accent-text);
+    border-radius: 999px; padding: 10px 20px; font-size: 14px; cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--text); border-color: var(--line); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .count { color: var(--muted); font-size: 13px; margin-left: auto; }
+
+  .list { margin-top: 18px; display: grid; gap: 10px; }
+  .item {
+    display: grid; grid-template-columns: 56px 1fr auto; gap: 14px; align-items: center;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px;
+  }
+  .item img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; background: #eee; }
+  .item .name { font-size: 14px; word-break: break-all; }
+  .item .meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .item .meta.ok { color: var(--ok); }
+  .item .meta.err { color: var(--err); }
+  .item .act { display: flex; gap: 6px; }
+  .item .act button { padding: 7px 14px; font-size: 13px; }
+
+  .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 28px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>WebP → JPG 轉換</h1>
+  <p class="sub">拖進來就轉，全部在瀏覽器裡完成，圖片不會上傳到任何地方</p>
+
+  <div class="drop" id="drop">
+    <strong>拖曳 WebP 圖片到這裡，或點一下選擇檔案</strong>
+    <span>可一次多張 · 也支援 PNG / GIF / AVIF 轉 JPG</span>
+    <input type="file" id="fileInput" multiple accept="image/*">
+  </div>
+
+  <div class="opts">
+    <label>品質 <input type="range" id="quality" min="50" max="100" value="92"><span class="q" id="qv">92</span></label>
+    <label>透明背景填色 <input type="color" id="bgcolor" value="#ffffff"></label>
+    <label><input type="checkbox" id="keepName" checked> 檔名沿用原檔名</label>
+  </div>
+
+  <div class="bar">
+    <button id="downloadAll" disabled>全部下載（ZIP）</button>
+    <button id="clear" class="ghost" disabled>清空</button>
+    <span class="count" id="count"></span>
+  </div>
+
+  <div class="list" id="list"><div class="empty">還沒有圖片</div></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+  var drop = document.getElementById('drop');
+  var fileInput = document.getElementById('fileInput');
+  var list = document.getElementById('list');
+  var qualityEl = document.getElementById('quality');
+  var qv = document.getElementById('qv');
+  var bgEl = document.getElementById('bgcolor');
+  var keepName = document.getElementById('keepName');
+  var downloadAllBtn = document.getElementById('downloadAll');
+  var clearBtn = document.getElementById('clear');
+  var countEl = document.getElementById('count');
+
+  var items = []; // { file, name, blob, status, el }
+
+  qualityEl.addEventListener('input', function () { qv.textContent = qualityEl.value; });
+
+  drop.addEventListener('click', function () { fileInput.click(); });
+  fileInput.addEventListener('change', function () { addFiles(fileInput.files); fileInput.value = ''; });
+
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('over'); });
+  });
+  drop.addEventListener('drop', function (e) { addFiles(e.dataTransfer.files); });
+
+  // 也支援直接貼上圖片
+  document.addEventListener('paste', function (e) {
+    var files = [];
+    for (var i = 0; i < e.clipboardData.items.length; i++) {
+      var it = e.clipboardData.items[i];
+      if (it.kind === 'file') files.push(it.getAsFile());
+    }
+    if (files.length) addFiles(files);
+  });
+
+  function addFiles(fileList) {
+    var files = Array.prototype.slice.call(fileList).filter(function (f) { return f.type.indexOf('image/') === 0; });
+    if (!files.length) return;
+    if (items.length === 0) list.innerHTML = '';
+    files.forEach(function (file) {
+      var item = { file: file, name: outName(file.name), blob: null, status: 'pending' };
+      item.el = renderItem(item);
+      list.appendChild(item.el);
+      items.push(item);
+      convert(item);
+    });
+    updateBar();
+  }
+
+  function outName(name) {
+    var base = name.replace(/\.[^.]+$/, '');
+    return (keepName.checked ? base : 'image_' + (items.length + 1)) + '.jpg';
+  }
+
+  function renderItem(item) {
+    var el = document.createElement('div');
+    el.className = 'item';
+    el.innerHTML =
+      '<img alt="">' +
+      '<div><div class="name"></div><div class="meta">轉換中…</div></div>' +
+      '<div class="act"><button class="dl" disabled>下載</button><button class="ghost rm">移除</button></div>';
+    el.querySelector('.name').textContent = item.name;
+    el.querySelector('.dl').addEventListener('click', function () { if (item.blob) saveBlob(item.blob, item.name); });
+    el.querySelector('.rm').addEventListener('click', function () {
+      items = items.filter(function (x) { return x !== item; });
+      el.remove();
+      if (!items.length) list.innerHTML = '<div class="empty">還沒有圖片</div>';
+      updateBar();
+    });
+    return el;
+  }
+
+  function convert(item) {
+    var url = URL.createObjectURL(item.file);
+    var img = new Image();
+    img.onload = function () {
+      try {
+        var canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        var ctx = canvas.getContext('2d');
+        ctx.fillStyle = bgEl.value;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob(function (blob) {
+          URL.revokeObjectURL(url);
+          if (!blob) return fail(item, '轉換失敗');
+          item.blob = blob;
+          item.status = 'done';
+          item.el.querySelector('img').src = URL.createObjectURL(blob);
+          var meta = item.el.querySelector('.meta');
+          meta.className = 'meta ok';
+          meta.textContent = canvas.width + ' × ' + canvas.height + ' · ' + fmt(item.file.size) + ' → ' + fmt(blob.size);
+          item.el.querySelector('.dl').disabled = false;
+          updateBar();
+        }, 'image/jpeg', qualityEl.value / 100);
+      } catch (e) { fail(item, '轉換失敗：' + e.message); }
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); fail(item, '這個瀏覽器無法讀取此格式'); };
+    img.src = url;
+  }
+
+  function fail(item, msg) {
+    item.status = 'error';
+    var meta = item.el.querySelector('.meta');
+    meta.className = 'meta err';
+    meta.textContent = msg;
+    updateBar();
+  }
+
+  function fmt(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+    return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+  }
+
+  function saveBlob(blob, name) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+  }
+
+  function updateBar() {
+    var done = items.filter(function (x) { return x.status === 'done'; });
+    countEl.textContent = items.length ? ('已完成 ' + done.length + ' / ' + items.length) : '';
+    downloadAllBtn.disabled = !done.length;
+    clearBtn.disabled = !items.length;
+  }
+
+  downloadAllBtn.addEventListener('click', function () {
+    var done = items.filter(function (x) { return x.status === 'done'; });
+    if (!done.length) return;
+    if (done.length === 1) return saveBlob(done[0].blob, done[0].name);
+    var zip = new JSZip();
+    var used = {};
+    done.forEach(function (x) {
+      var n = x.name;
+      if (used[n]) { var i = ++used[n]; n = n.replace(/\.jpg$/, '_' + i + '.jpg'); } else { used[n] = 1; }
+      zip.file(n, x.blob);
+    });
+    downloadAllBtn.disabled = true;
+    downloadAllBtn.textContent = '打包中…';
+    zip.generateAsync({ type: 'blob' }).then(function (blob) {
+      var d = new Date();
+      var stamp = d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes());
+      saveBlob(blob, 'jpg_' + stamp + '.zip');
+      downloadAllBtn.textContent = '全部下載（ZIP）';
+      updateBar();
+    });
+  });
+
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+  clearBtn.addEventListener('click', function () {
+    items = [];
+    list.innerHTML = '<div class="empty">還沒有圖片</div>';
+    updateBar();
+  });
+</script>
+</body>
+</html>
